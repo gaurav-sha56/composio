@@ -1,9 +1,10 @@
 from __future__ import annotations
-
+import asyncio
 import base64
 import functools
 import hashlib
 import hmac
+import inspect
 import json
 import logging
 import re
@@ -766,14 +767,33 @@ class TriggerSubscription(Resource):
         if not self._filters_match(data, filters, callback.__name__):
             return
 
-        try:
-            callback(data)
-        except Exception:
+        def _log_error() -> None:
             self.logger.error(
                 f"Error executing `{callback.__name__}` for "
                 f"event `{data['metadata']['trigger_slug']}` "
                 f"with error:\n {traceback.format_exc()}"
             )
+
+        try:
+            result = callback(data)
+            if inspect.isawaitable(result):
+                try:
+                    loop = asyncio.get_running_loop()
+                except RuntimeError:
+                    loop = None
+
+                if loop and loop.is_running():
+                    async def _runner() -> None:
+                        try:
+                            await result
+                        except Exception:
+                            _log_error()
+
+                    loop.create_task(_runner())
+                else:
+                    asyncio.run(result)
+        except Exception:
+            _log_error()
 
     def _handle_event(self, event: str) -> None:
         """Filter events and call the callback function."""

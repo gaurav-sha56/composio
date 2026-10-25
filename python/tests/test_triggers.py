@@ -529,6 +529,45 @@ class TestTriggers:
                 timeout=5.0, on_subscription_error=on_subscription_error
             )
             assert result == mock_subscription
+    
+    def test_handle_callback_executes_async_handler(self, mock_client):
+        """Async trigger callbacks registered via handle() are properly awaited."""
+        subscription = TriggerSubscription(client=mock_client)
+        executed = []
+
+        async def async_handler(event):
+            executed.append(event["metadata"]["trigger_slug"])
+
+        event_data = {
+            "metadata": {
+                "trigger_slug": "GITHUB_COMMIT_EVENT",
+            },
+        }
+
+        with patch.object(subscription, "_filters_match", return_value=True):
+            subscription._handle_callback(async_handler, event_data, {})
+
+        assert executed == ["GITHUB_COMMIT_EVENT"]
+
+    def test_handle_callback_catches_async_handler_exception(self, mock_client):
+        """Rejected async trigger callbacks are caught and logged instead of crashing."""
+        subscription = TriggerSubscription(client=mock_client)
+
+        async def failing_async_handler(event):
+            raise RuntimeError("async callback boom")
+
+        event_data = {
+            "metadata": {
+                "trigger_slug": "GITHUB_COMMIT_EVENT",
+            },
+        }
+
+        with (
+            patch.object(subscription, "_filters_match", return_value=True),
+            patch.object(subscription.logger, "error") as mock_log_error,
+        ):
+            subscription._handle_callback(failing_async_handler, event_data, {})
+            mock_log_error.assert_called_once()
 
 
 class TestVerifyWebhook:
